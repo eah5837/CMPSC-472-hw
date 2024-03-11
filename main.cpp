@@ -1,99 +1,117 @@
 #include <iostream>
 #include <thread>
-#include <mutex>
 #include <vector>
 #include <future>
-#include <unistd.h>
+#include <map>
+#include <mutex>
+#include <condition_variable>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+#include <cctype>
 
-// Key Feature 1: Multi-Process and Thread Manager
-void worker_process() {
-    std::cout << "Worker process ID: " << getpid() << std::endl;
+// Simple Logger for Thread Management
+std::mutex cout_mutex;
+void log(const std::string& message) {
+    std::lock_guard<std::mutex> guard(cout_mutex);
+    std::cout << message << std::endl;
 }
 
-void worker_thread() {
-    std::cout << "Worker thread ID: " << std::this_thread::get_id() << std::endl;
+// Thread function for demonstration
+void threadFunction(int id) {
+    log("Thread " + std::to_string(id) + " executing.");
+    std::this_thread::sleep_for(std::chrono::seconds(1));
 }
 
-// Key Feature 2: Inter-Process Communication (IPC) Mechanisms
+// Inter-Thread Communication Demonstration
 std::mutex mtx;
-void producer_consumer() {
-    std::vector<int> shared_data;
-    // Producer
-    std::thread producer([&shared_data]() {
-        for (int i = 0; i < 5; ++i) {
-            std::lock_guard<std::mutex> lock(mtx);
-            shared_data.push_back(i);
-            std::cout << "Produced " << i << std::endl;
-        }
-    });
-    // Consumer
-    std::thread consumer([&shared_data]() {
-        for (int i = 0; i < 5; ++i) {
-            std::lock_guard<std::mutex> lock(mtx);
-            std::cout << "Consumed " << shared_data.back() << std::endl;
-            shared_data.pop_back();
-        }
-    });
-    producer.join();
-    consumer.join();
+std::condition_variable cv;
+bool ready = false;
+int shared_value = 0;
+
+void threadWriter() {
+    std::unique_lock<std::mutex> lock(mtx);
+    shared_value = 2024;  // Example value
+    ready = true;
+    log("Writer thread has written value.");
+    cv.notify_one();
 }
 
-// Key Feature 3: Parallel Text File Processing (Dummy Example)
-int process_data(int data) {
-    // Placeholder for data processing logic
-    return data * data;
+void threadReader() {
+    std::unique_lock<std::mutex> lock(mtx);
+    cv.wait(lock, [] { return ready; });
+    log("Reader thread reads value: " + std::to_string(shared_value));
 }
 
-void parallel_processing() {
-    std::vector<int> data_to_process = {1, 2, 3, 4, 5};
-    std::vector<std::future<int>> results;
+// Parallel Text File Processing
+std::map<char, int> processSegment(const std::string& segment) {
+    std::map<char, int> segmentCount;
+    for (char ch : segment) {
+        ch = std::toupper(ch);
+        segmentCount[ch]++;
+    }
+    return segmentCount;
+}
 
-    for (int data : data_to_process) {
-        results.emplace_back(std::async(std::launch::async, process_data, data));
+std::map<char, int> parallelTextProcessing(const std::string& text) {
+    size_t length = text.length();
+    size_t perThread = length / 4; // Assume 4 threads for simplicity
+
+    std::vector<std::future<std::map<char, int>>> futures;
+    for (int i = 0; i < 4; ++i) {
+        std::string segment = text.substr(i * perThread, perThread);
+        futures.push_back(std::async(std::launch::async, processSegment, segment));
     }
 
-    for (auto& result : results) {
-        std::cout << result.get() << std::endl;
+    std::map<char, int> result;
+    for (auto& f : futures) {
+        auto segmentCount = f.get();
+        for (auto& pair : segmentCount) {
+            result[pair.first] += pair.second;
+        }
     }
+    return result;
 }
 
-// Key Feature 4: Simple User Interface (CLI)
-void main_menu() {
+// Main Menu for Demo
+void mainMenu() {
     while (true) {
-        std::cout << "\nMain Menu:\n"
-                     "1. Manage Processes/Threads\n"
-                     "2. IPC Operations\n"
-                     "3. File Processing\n"
-                     "4. Exit\n"
-                     "Enter your choice: ";
+        log("\nMain Menu:\n"
+            "1. Thread Management Demo\n"
+            "2. Inter-Thread Communication Demo\n"
+            "3. Parallel Text File Processing\n"
+            "4. Exit");
+        log("Enter your choice: ");
 
         int choice;
         std::cin >> choice;
 
-        switch (choice) {
-            case 1:
-                std::cout << "Process/Thread Management Selected" << std::endl;
-                std::cout << "Process ID: " << getpid() << std::endl;
-                std::cout << "Thread ID: " << std::this_thread::get_id() << std::endl;
-                break;
-            case 2:
-                std::cout << "IPC Operations Selected" << std::endl;
-                producer_consumer();
-                break;
-            case 3:
-                std::cout << "File Processing Selected" << std::endl;
-                parallel_processing();
-                break;
-            case 4:
-                std::cout << "Exiting..." << std::endl;
-                return;
-            default:
-                std::cout << "Invalid choice, please try again." << std::endl;
+        if (choice == 1) {
+            std::thread t1(threadFunction, 1);
+            std::thread t2(threadFunction, 2);
+            t1.join();
+            t2.join();
+        } else if (choice == 2) {
+            std::thread writer(threadWriter);
+            std::thread reader(threadReader);
+            writer.join();
+            reader.join();
+        } else if (choice == 3) {
+            std::string text = "This is a simple example of text to process in parallel.";
+            auto result = parallelTextProcessing(text);
+            for (const auto& pair : result) {
+                log(std::string(1, pair.first) + ": " + std::to_string(pair.second));
+            }
+        } else if (choice == 4) {
+            log("Exiting...");
+            break;
+        } else {
+            log("Invalid choice, please try again.");
         }
     }
 }
 
 int main() {
-    main_menu();
+    mainMenu();
     return 0;
 }
